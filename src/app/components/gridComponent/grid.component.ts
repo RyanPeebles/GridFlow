@@ -1,8 +1,9 @@
-import { core } from '@angular/compiler';
-import { Component, ViewChild, ElementRef, AfterViewInit, output, viewChild, ViewChildren, HostListener } from '@angular/core';
+import { Call, core } from '@angular/compiler';
+import { Component, ViewChild, ElementRef, AfterViewInit, output, viewChild, ViewChildren, HostListener, ChangeDetectionStrategy, QueryList, viewChildren} from '@angular/core';
 import { NumberValueAccessor } from '@angular/forms';
 import { RouterOutlet } from '@angular/router';
-import { elementAt, interval } from 'rxjs';
+import { fromEvent, debounceTime, Observable, throttleTime} from 'rxjs';
+import { optionsButton } from './optionsButton.component';
 
 
 @Component({
@@ -11,14 +12,16 @@ import { elementAt, interval } from 'rxjs';
     templateUrl: '/src/app/components/gridComponent/grid.component.html' ,
     styleUrl: '/src/app/components/gridComponent/grid.component.css',
     imports: [RouterOutlet],
+    changeDetection: ChangeDetectionStrategy.OnPush,
        
 
 
-})
-
+}) 
 
 export class gridComponent implements AfterViewInit {
     @ViewChild('myCanvas', {static: false}) myCanvas: ElementRef
+   
+    
     constructor(){
         
         this.mousePos = new coordinate(0,0);
@@ -26,9 +29,9 @@ export class gridComponent implements AfterViewInit {
         this.zoomLevel = 8;
         this.zoomSpeed = 8;
         this.scaler = 1;
-        this.myInterval = 50;
-        
-       
+        this.myInterval = 500;
+        this.panning = false;
+        this.panSpeed = 8;
 
        // this.offset = 10;
         
@@ -54,15 +57,43 @@ export class gridComponent implements AfterViewInit {
     xAxisNEG: coordinate[];
     yAxisNEG: coordinate[];
 
+    allAxis: any[];
+
     myInterval: number;
     interval: any;
 
+    panning: boolean;
+    panSpeed: number;
   
 
-
-    @HostListener('mousemove',['$event']) onMousemove(event: MouseEvent){
+   
+    moveMouse(event: MouseEvent){
         this.mousePos.x = event.clientX;
         this.mousePos.y = event.clientY;
+
+        if(this.panning){
+            let moveX = event.movementX ;
+            let moveY = event.movementY;
+            this.origin.x += moveX;
+            this.origin.y += moveY;
+            this.xAxisNEG.forEach(coord => {
+                coord.x += moveX;
+                //coord.y += moveY;
+            }); 
+            this.yAxisNEG.forEach(coord => {
+                //coord.x += moveX;
+                coord.y += moveY;
+            }); 
+            this.xAxisPOS.forEach(coord => {
+                coord.x += moveX;
+                //coord.y += moveY;
+            }); 
+            this.yAxisPOS.forEach(coord => {
+                //coord.x += moveX;
+                coord.y += moveY;
+            }); 
+        }
+        this.updateAxis();
        this.updateScene();
         
 
@@ -70,20 +101,21 @@ export class gridComponent implements AfterViewInit {
     }
     @HostListener('mouseup',['$event']) onMouseup(event: MouseEvent){
         
-       
-        clearInterval(this.interval);
+        this.panning=false;
+      
 
     }
     @HostListener('mousedown',['$event']) onMousedown(event: MouseEvent){
       
-     
-        this.interval = setInterval(this.drag,this.myInterval);
         
-
+        this.panning = true;
         
-
     }
-    @HostListener('wheel',['$event']) onScroll(event: WheelEvent){
+    @HostListener('window:mouseleave',['$event.target']) onMouseLeave(){
+        this.panning = false;
+        console.log('leave');
+    }
+    zoom(event:WheelEvent){
       
 
       
@@ -140,23 +172,39 @@ export class gridComponent implements AfterViewInit {
         this.yAxisPOS=[];
         this.xAxisNEG=[];
         this.yAxisNEG=[];
+        this.allAxis = [];
+        this.allAxis.push(this.xAxisNEG);
+        this.allAxis.push(this.xAxisPOS);
+        this.allAxis.push(this.yAxisNEG);
+        this.allAxis.push(this.yAxisPOS);
+
+        
        // this.offset = 50;
        // this.createCoords();
         this.initAxis();
+       
         this.drawXY();
         this.drawAxis();
+        fromEvent(this.canvas,'mousemove').pipe(
+            throttleTime(15)).subscribe((event:MouseEvent) =>{
+               
+                this.moveMouse(event);
+            });
+        fromEvent(this.canvas,'wheel').pipe(
+            throttleTime(15)).subscribe((event:WheelEvent) =>{
+                this.zoom(event);
+            });
         
       }
     
-    drag(){
-        console.log("drag");
-    }
+   
     updateScene(){
         this.context.clearRect(0,0,this.canvas.width,this.canvas.height);
         this.drawPos();
         this.drawXY();
          this.drawAxis();
     }
+   
     drawPos(){
         this.context.strokeStyle = "white";
         this.context.font = '30px serif';
@@ -169,6 +217,7 @@ export class gridComponent implements AfterViewInit {
             this.context.strokeStyle = 'white';
             this.context.lineWidth = 1;
             this.xAxisPOS.forEach(element => {
+            
                 this.context.stroke(element.path);
                 
             });
@@ -242,6 +291,19 @@ export class gridComponent implements AfterViewInit {
         }
 
     }
+
+    inBounds(c:coordinate){
+        if(c.x < this.canvas.width && c.x >= 0){
+            if(c.y <this.canvas.height && c.y >= 0){
+                return true;
+            }
+        }
+        return false;
+    }
+    trimAxisArray(){
+      
+      
+    }
     updateAxis(){
         this.context.lineWidth = 1;
  
@@ -301,7 +363,7 @@ export class gridComponent implements AfterViewInit {
         });
 
 
-        if(this.xAxisNEG[this.xAxisNEG.length-1].x >= this.offset){
+        if(this.xAxisNEG.length > 0 && this.xAxisNEG[this.xAxisNEG.length-1].x >= this.offset){
             for(let i = this.xAxisNEG[this.xAxisNEG.length-1].x; i>=0; i= i - this.offset){
             
             let newCoord = new coordinate(i,0,this.xAxisNEG[this.xAxisNEG.length-1].local_x -1,0);
@@ -316,7 +378,7 @@ export class gridComponent implements AfterViewInit {
         }
 
 
-        if(this.xAxisPOS[this.xAxisPOS.length-1].x < this.canvas.width - this.offset){
+        if(this.xAxisPOS.length > 0 && this.xAxisPOS[this.xAxisPOS.length-1].x < this.canvas.width - this.offset){
             for(let i = this.xAxisPOS[this.xAxisPOS.length-1].x; i<this.canvas.width; i= i + this.offset){
           
             let newCoord = new coordinate(i,0,this.xAxisPOS[this.xAxisPOS.length-1].local_x +1,0);
@@ -331,7 +393,7 @@ export class gridComponent implements AfterViewInit {
         }
 
 
-        if(this.yAxisPOS[this.yAxisPOS.length-1].y > this.offset){
+        if(this.yAxisPOS.length > 0 && this.yAxisPOS[this.yAxisPOS.length-1].y > this.offset){
             for(let i = this.yAxisPOS[this.yAxisPOS.length-1].y; i>=0; i= i - this.offset){
           
             let newCoord = new coordinate(0,i,0,this.yAxisPOS[this.yAxisPOS.length-1].local_y +1);
@@ -345,7 +407,7 @@ export class gridComponent implements AfterViewInit {
             
         }
 
-        if(this.yAxisPOS[this.yAxisPOS.length-1].y < this.canvas.height - this.offset){
+        if(this.yAxisNEG.length > 0 && this.yAxisPOS[this.yAxisPOS.length-1].y < this.canvas.height - this.offset){
             for(let i = this.yAxisPOS[this.yAxisPOS.length-1].y; i<=this.canvas.height; i= i + this.offset){
           
             let newCoord = new coordinate(0,i,0,this.yAxisPOS[this.yAxisPOS.length-1].local_y -1);
@@ -358,6 +420,7 @@ export class gridComponent implements AfterViewInit {
             }
             
         }
+        this.trimAxisArray();
         //this.drawXY();
     }
 }
@@ -378,5 +441,6 @@ export class gridComponent implements AfterViewInit {
     readonly local_x: number;
     readonly local_y: number;
 
+   
    
 }
